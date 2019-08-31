@@ -130,21 +130,17 @@ public class WxHelper {
     public boolean pay(@NonNull WechatPayBean wechatPayBean,
                        @Nullable String extData,
                        @Nullable WxPayListener listener) {
-        boolean ret = false;
-        if (wechatPayBean != null) {
-            PayReq req = new PayReq();
-            req.appId = wechatPayBean.getAppid();
-            req.partnerId = wechatPayBean.getPartnerid();
-            req.prepayId = wechatPayBean.getPrepayid();
-            req.nonceStr = wechatPayBean.getNoncestr();
-            req.timeStamp = wechatPayBean.getTimestamp();
-            req.packageValue = "Sign=WXPay";
-            req.sign = wechatPayBean.getSign();
-            req.extData = extData;
-            ret = mWXApi.sendReq(req);
-        }
+        PayReq req = new PayReq();
+        req.appId = wechatPayBean.getAppid();
+        req.partnerId = wechatPayBean.getPartnerid();
+        req.prepayId = wechatPayBean.getPrepayid();
+        req.nonceStr = wechatPayBean.getNoncestr();
+        req.timeStamp = wechatPayBean.getTimestamp();
+        req.packageValue = "Sign=WXPay";
+        req.sign = wechatPayBean.getSign();
+        req.extData = extData;
         WXPayEntryActivity.setWxPayListener(listener);
-        return ret;
+        return mWXApi.sendReq(req);
     }
 
     /**
