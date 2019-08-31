@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="share_to">分享到</string>
+    <string name="share_failed">分享失败</string>
+    <string name="not_installed">微信未安装</string>
+    <string name="register_failed">注册APP到微信失败</string>
+    <string name="please_install_to_auth">请安装微信后再进行授权登录！</string>
+</resources>
