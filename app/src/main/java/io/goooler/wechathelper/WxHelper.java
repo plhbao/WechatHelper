@@ -11,11 +11,13 @@ import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 import androidx.core.content.FileProvider;
 
 import com.tencent.mm.opensdk.modelbiz.WXLaunchMiniProgram;
@@ -89,11 +91,11 @@ public class WxHelper {
             mWXApi = WXAPIFactory.createWXAPI(context, wxAppId, true);
         }
         if (!mWXApi.isWXAppInstalled()) {
-            Toast.makeText(context, context.getString(R.string.not_installed), Toast.LENGTH_SHORT).show();
+            showToast(R.string.not_installed);
             return;
         }
         if (!mWXApi.registerApp(wxAppId)) {
-            Toast.makeText(context, context.getString(R.string.register_failed), Toast.LENGTH_SHORT).show();
+            showToast(R.string.register_failed);
         }
     }
 
@@ -106,7 +108,7 @@ public class WxHelper {
      */
     public boolean login(Context context, @NonNull WxLoginListener listener) {
         if (!mWXApi.isWXAppInstalled()) {
-            Toast.makeText(context, context.getString(R.string.please_install_to_auth), Toast.LENGTH_SHORT).show();
+            showToast(R.string.please_install_to_auth);
             return false;
         }
 
@@ -339,7 +341,7 @@ public class WxHelper {
             bmp = BitmapFactory.decodeFile(imageFile.getAbsolutePath());
         }
         if (bmp == null) {
-            Toast.makeText(context, context.getString(R.string.share_failed), Toast.LENGTH_SHORT).show();
+            showToast(R.string.share_failed);
             return;
         }
 
@@ -703,5 +705,21 @@ public class WxHelper {
         }
 
         return output.toByteArray();
+    }
+
+    /**
+     * 可在子线程使用的 toast，防止子线程使用时闪退
+     *
+     * @param stringId id
+     */
+    private void showToast(@StringRes int stringId) {
+        // 判断线程
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            Toast.makeText(appContext, stringId, Toast.LENGTH_SHORT).show();
+        } else {
+            Looper.prepare();
+            Toast.makeText(appContext, stringId, Toast.LENGTH_SHORT).show();
+            Looper.loop();
+        }
     }
 }

@@ -4,6 +4,9 @@ import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import com.tencent.mm.opensdk.modelbase.BaseReq;
 import com.tencent.mm.opensdk.modelbase.BaseResp;
 import com.tencent.mm.opensdk.modelmsg.SendAuth;
@@ -49,51 +52,54 @@ public class WXEntryActivity extends Activity implements IWXAPIEventHandler {
      */
     @Override
     public void onResp(BaseResp resp) {
+        boolean hasWxLoginListener = wxLoginListener != null && wxLoginListener.get() != null;
+        boolean hasWxShareListener = wxShareListener != null && wxShareListener.get() != null;
+
         switch (resp.errCode) {
             case BaseResp.ErrCode.ERR_OK:
                 if (resp instanceof SendAuth.Resp) {
                     String code = ((SendAuth.Resp) resp).code;
-                    if (wxLoginListener != null) {
+                    if (hasWxLoginListener) {
                         wxLoginListener.get().onSucceed(code);
                     }
-                    if (wxShareListener != null) {
+                    if (hasWxShareListener) {
                         wxShareListener.get().onSucceed();
                     }
                 }
                 break;
             case BaseResp.ErrCode.ERR_USER_CANCEL:
-                if (wxLoginListener != null) {
+                if (hasWxLoginListener) {
                     wxLoginListener.get().onFailed(ErrCode.CANCEL);
                 }
-                if (wxShareListener != null) {
+                if (hasWxShareListener) {
                     wxShareListener.get().onFailed(ErrCode.CANCEL);
                 }
                 break;
             case BaseResp.ErrCode.ERR_AUTH_DENIED:
-                if (wxLoginListener != null) {
+                if (hasWxLoginListener) {
                     wxLoginListener.get().onFailed(ErrCode.AUTH_DENIED);
                 }
-                if (wxShareListener != null) {
+                if (hasWxShareListener) {
                     wxShareListener.get().onFailed(ErrCode.AUTH_DENIED);
                 }
                 break;
             case BaseResp.ErrCode.ERR_SENT_FAILED:
-                if (wxLoginListener != null) {
+                if (hasWxLoginListener) {
                     wxLoginListener.get().onFailed(ErrCode.SENT_FAILED);
                 }
                 break;
             case BaseResp.ErrCode.ERR_UNSUPPORT:
-                if (wxLoginListener != null) {
+                if (hasWxLoginListener) {
                     wxLoginListener.get().onFailed(ErrCode.UNSUPPORTED);
                 }
                 break;
             case BaseResp.ErrCode.ERR_COMM:
-                if (wxLoginListener != null) {
+                if (hasWxLoginListener) {
                     wxLoginListener.get().onFailed(ErrCode.COMMON);
                 }
                 break;
             case BaseResp.ErrCode.ERR_BAN:
-                if (wxLoginListener != null) {
+                if (hasWxLoginListener) {
                     wxLoginListener.get().onFailed(ErrCode.BAN);
                 }
             default:
@@ -109,11 +115,11 @@ public class WXEntryActivity extends Activity implements IWXAPIEventHandler {
     public void onReq(BaseReq req) {
     }
 
-    public static void setWxLoginListener(WxLoginListener wxLoginListener) {
+    public static void setWxLoginListener(@NonNull WxLoginListener wxLoginListener) {
         WXEntryActivity.wxLoginListener = new WeakReference<>(wxLoginListener);
     }
 
-    public static void setWxShareListener(WxShareListener wxShareListener) {
+    public static void setWxShareListener(@Nullable WxShareListener wxShareListener) {
         WXEntryActivity.wxShareListener = new WeakReference<>(wxShareListener);
     }
 

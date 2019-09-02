@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
 
+import androidx.annotation.Nullable;
+
 import com.tencent.mm.opensdk.modelbase.BaseReq;
 import com.tencent.mm.opensdk.modelbase.BaseResp;
 import com.tencent.mm.opensdk.modelpay.PayResp;
@@ -46,21 +48,23 @@ public class WXPayEntryActivity extends Activity implements IWXAPIEventHandler {
      */
     @Override
     public void onResp(BaseResp baseResp) {
+        boolean hasWxLoginListener = wxPayListener != null && wxPayListener.get() != null;
+
         if (baseResp != null) {
             PayResp payResp = (PayResp) baseResp;
             switch (payResp.errCode) {
                 case PayResp.ErrCode.ERR_OK:
-                    if (wxPayListener != null) {
+                    if (hasWxLoginListener) {
                         wxPayListener.get().onSucceed(payResp.extData);
                     }
                     break;
                 case PayResp.ErrCode.ERR_COMM:
-                    if (wxPayListener != null) {
+                    if (hasWxLoginListener) {
                         wxPayListener.get().onFailed(ErrCode.COMMON, payResp.extData);
                     }
                     break;
                 case PayResp.ErrCode.ERR_USER_CANCEL:
-                    if (wxPayListener != null) {
+                    if (hasWxLoginListener) {
                         wxPayListener.get().onFailed(ErrCode.CANCEL, payResp.extData);
                     }
                 default:
@@ -77,7 +81,7 @@ public class WXPayEntryActivity extends Activity implements IWXAPIEventHandler {
     public void onReq(BaseReq baseReq) {
     }
 
-    public static void setWxPayListener(WxPayListener wxPayListener) {
+    public static void setWxPayListener(@Nullable WxPayListener wxPayListener) {
         WXPayEntryActivity.wxPayListener = new WeakReference<>(wxPayListener);
     }
 
