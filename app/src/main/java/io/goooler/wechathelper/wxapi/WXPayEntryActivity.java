@@ -48,23 +48,23 @@ public class WXPayEntryActivity extends Activity implements IWXAPIEventHandler {
      */
     @Override
     public void onResp(BaseResp baseResp) {
-        boolean hasWxLoginListener = wxPayListener != null && wxPayListener.get() != null;
+        boolean hasWxPayListener = wxPayListener != null && wxPayListener.get() != null;
 
         if (baseResp != null) {
             PayResp payResp = (PayResp) baseResp;
             switch (payResp.errCode) {
                 case PayResp.ErrCode.ERR_OK:
-                    if (hasWxLoginListener) {
+                    if (hasWxPayListener) {
                         wxPayListener.get().onSucceed(payResp.extData);
                     }
                     break;
                 case PayResp.ErrCode.ERR_COMM:
-                    if (hasWxLoginListener) {
+                    if (hasWxPayListener) {
                         wxPayListener.get().onFailed(ErrCode.COMMON, payResp.extData);
                     }
                     break;
                 case PayResp.ErrCode.ERR_USER_CANCEL:
-                    if (hasWxLoginListener) {
+                    if (hasWxPayListener) {
                         wxPayListener.get().onFailed(ErrCode.CANCEL, payResp.extData);
                     }
                 default:

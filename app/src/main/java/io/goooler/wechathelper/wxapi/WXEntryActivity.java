@@ -126,6 +126,7 @@ public class WXEntryActivity extends Activity implements IWXAPIEventHandler {
     @Override
     protected void onDestroy() {
         wxLoginListener = null;
+        wxShareListener = null;
         super.onDestroy();
     }
 }
