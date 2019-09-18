@@ -6,8 +6,8 @@
 ## 使用
 ### 在 build.gradle 中引用
 ```groovy
-'com.webuy.eureka:jlwechat:1.0.1'
-'com.tencent.mm.opensdk:wechat-sdk-android-without-mta:5.4.0'
+implementation 'io.goooler:WechatHelper:1.0.0'
+implementation 'com.tencent.mm.opensdk:wechat-sdk-android-without-mta:5.4.0'
 ```
 
 ## 摘要：
