@@ -64,7 +64,7 @@ publish {
     userOrg = 'goooler'
     groupId = 'io.goooler'
     artifactId = 'wechathelper'
-    publishVersion = '1.0.0'
+    publishVersion = '1.0.1'
     desc = 'wechat android sdk helper'
     website = 'https://github.com/Goooler/WechatHelper'
 }

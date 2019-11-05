@@ -2,23 +2,23 @@ package io.goooler.wechathelper;
 
 import android.annotation.SuppressLint;
 import android.content.ComponentName;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
-import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Looper;
+import android.provider.MediaStore;
 import android.text.TextUtils;
 import android.widget.Toast;
 
+import androidx.annotation.MainThread;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
-import androidx.core.content.FileProvider;
 
 import com.tencent.mm.opensdk.modelbiz.WXLaunchMiniProgram;
 import com.tencent.mm.opensdk.modelmsg.SendAuth;
@@ -36,6 +36,9 @@ import com.tencent.mm.opensdk.openapi.WXAPIFactory;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 
 import io.goooler.wechathelper.bean.WechatPayBean;
 import io.goooler.wechathelper.callback.WxLoginListener;
@@ -53,7 +56,12 @@ public class WxHelper {
 
     private static final int TIMELINE_SUPPORTED_VERSION = 0x21020001;
     private static final int THUMB_SIZE = 150;
+    // 缩略图最大32KB
     private static final int MAX_BYTES = 32 * 1024;
+    // 图片的二进制数据:内容大小不超过 10MB
+    private static final int MAX_IMAGE_DATA_SIZE = 10 * 1024 * 1024;
+    // 小程序消息封面图片，小于128k
+    private static final int MAX_MINI_PROGRAM_THUMB_SIZE = 128 * 1024;
     private static final String WECHAT_PACKAGE_NAME = "com.tencent.mm";
     private static final String WECHAT_UI_NAME = "com.tencent.mm.ui.LauncherUI";
     /**
@@ -82,19 +90,20 @@ public class WxHelper {
     /**
      * 初始化，一般在 application 里进行
      *
-     * @param context 上下文，一般为 app
-     * @param wxAppId 微信 appId
+     * @param appContext 上下文，一般为 app
+     * @param appId      微信 appId
      */
-    public void initData(Context context, String wxAppId) {
-        appContext = context;
+    @MainThread
+    public void initData(Context appContext, String appId) {
+        this.appContext = appContext;
         if (mWXApi == null) {
-            mWXApi = WXAPIFactory.createWXAPI(context, wxAppId, true);
+            mWXApi = WXAPIFactory.createWXAPI(appContext, appId, true);
         }
         if (!mWXApi.isWXAppInstalled()) {
             showToast(R.string.not_installed);
             return;
         }
-        if (!mWXApi.registerApp(wxAppId)) {
+        if (!mWXApi.registerApp(appId)) {
             showToast(R.string.register_failed);
         }
     }
@@ -102,11 +111,11 @@ public class WxHelper {
     /**
      * 微信登录
      *
-     * @param context  上下文
      * @param listener 登录结果的监听
      * @return true/false
      */
-    public boolean login(Context context, @NonNull WxLoginListener listener) {
+    @MainThread
+    public boolean login(@NonNull WxLoginListener listener) {
         if (!mWXApi.isWXAppInstalled()) {
             showToast(R.string.please_install_to_auth);
             return false;
@@ -132,6 +141,7 @@ public class WxHelper {
     public boolean pay(@NonNull WechatPayBean wechatPayBean,
                        @Nullable String extData,
                        @Nullable WxPayListener listener) {
+        boolean ret;
         PayReq req = new PayReq();
         req.appId = wechatPayBean.getAppid();
         req.partnerId = wechatPayBean.getPartnerid();
@@ -141,8 +151,9 @@ public class WxHelper {
         req.packageValue = "Sign=WXPay";
         req.sign = wechatPayBean.getSign();
         req.extData = extData;
+        ret = mWXApi.sendReq(req);
         WXPayEntryActivity.setWxPayListener(listener);
-        return mWXApi.sendReq(req);
+        return ret;
     }
 
     /**
@@ -168,7 +179,13 @@ public class WxHelper {
                                            String title,
                                            String content,
                                            String imagePath) {
-        Uri imageUri = Uri.fromFile(new File(imagePath));
+        Uri imageUri;
+        File file = new File(imagePath);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            imageUri = Uri.fromFile(file);
+        } else {
+            imageUri = getImageContentUri(context, file);
+        }
         Intent intent = new Intent();
         intent.setAction(Intent.ACTION_SEND);
         intent.setType("image/*");
@@ -188,7 +205,13 @@ public class WxHelper {
     public void shareVideoBySystem(Context context,
                                    File videoFile) {
         Intent intent = new Intent(Intent.ACTION_SEND);
-        intent.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(videoFile));
+        Uri videoUri;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            videoUri = Uri.fromFile(videoFile);
+        } else {
+            videoUri = getVideoContentUri(context, videoFile);
+        }
+        intent.putExtra(Intent.EXTRA_STREAM, videoUri);
         intent.setType("video/*");
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -308,60 +331,30 @@ public class WxHelper {
     }
 
     /**
-     * 通过微信分享图片到聊天界面
-     */
-    public void shareImageToSession(Context context,
-                                    final File imageFile,
-                                    WxShareListener listener) {
-        shareImageByWechat(context, imageFile, SendMessageToWX.Req.WXSceneSession, listener);
-    }
-
-    /**
-     * 通过微信分享图片到朋友圈
-     */
-    public void shareImgToTimeline(Context context,
-                                   final File imageFile,
-                                   WxShareListener listener) {
-        shareImageByWechat(context, imageFile, SendMessageToWX.Req.WXSceneTimeline, listener);
-    }
-
-    /**
-     * 分享到微信
+     * 通过系统分享多张图片给微信好友
      *
-     * @param context   上下文
-     * @param imageFile 图片文件
-     * @param wxScene   分到想微信的场景：聊天、朋友圈 等
+     * @param context context
+     * @param content content
+     * @param imgList 图片文件列表
      */
-    private void shareImageByWechat(Context context,
-                                    final File imageFile,
-                                    int wxScene,
-                                    @Nullable WxShareListener listener) {
-        Bitmap bmp = null;
-        if (imageFile != null) {
-            bmp = BitmapFactory.decodeFile(imageFile.getAbsolutePath());
+    public void shareImagesToSession(Context context, String content, List<File> imgList) {
+        Intent intent = new Intent();
+        intent.putExtra(Intent.EXTRA_TEXT, content);
+        intent.setComponent(new ComponentName("com.tencent.mm", "com.tencent.mm.ui.tools.ShareImgUI"));
+        intent.setAction(Intent.ACTION_SEND_MULTIPLE);
+        intent.setType("image/*");
+        ArrayList<Uri> imgUris = new ArrayList<>();
+        for (File img : imgList) {
+            Uri imageUri;
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+                imageUri = Uri.fromFile(img);
+            } else {
+                imageUri = getImageContentUri(context, img);
+            }
+            imgUris.add(imageUri);
         }
-        if (bmp == null) {
-            showToast(R.string.share_failed);
-            return;
-        }
-
-        // 初始化 WXImageObject 和 WXMediaMessage 对象
-        WXImageObject imageObject = new WXImageObject(bmp);
-        WXMediaMessage msg = new WXMediaMessage();
-        msg.mediaObject = imageObject;
-
-        // 设置缩略图
-        Bitmap thumbBmp = Bitmap.createScaledBitmap(bmp, THUMB_SIZE, THUMB_SIZE, true);
-        bmp.recycle();
-        msg.thumbData = bmpToByteArray(thumbBmp, true);
-
-        // 构造一个Req
-        SendMessageToWX.Req req = new SendMessageToWX.Req();
-        req.transaction = buildTransaction("img");
-        req.message = msg;
-        req.scene = wxScene;
-        WXEntryActivity.setWxShareListener(listener);
-        mWXApi.sendReq(req);
+        intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, imgUris);
+        context.startActivity(intent);
     }
 
     /**
@@ -383,17 +376,18 @@ public class WxHelper {
                                          int scene,
                                          WxShareListener listener,
                                          String appId) {
-        WXImageObject imageObject = new WXImageObject();
-        imageObject.setImagePath(path);
+        WXImageObject imageObject;
         Bitmap thumbBmp;
         Bitmap bmp = BitmapFactory.decodeFile(path);
-        if (bmp.getWidth() == THUMB_SIZE && bmp.getHeight() == THUMB_SIZE) {
-            thumbBmp = bmp;
+        Bitmap sendBitmap;
+        if (bmp.getByteCount() > MAX_IMAGE_DATA_SIZE) {
+            byte[] compressedBytes = bitmap2Bytes(bmp, MAX_IMAGE_DATA_SIZE);
+            sendBitmap = BitmapFactory.decodeByteArray(compressedBytes, 0, compressedBytes.length);
         } else {
-            thumbBmp = Bitmap.createScaledBitmap(bmp, THUMB_SIZE, THUMB_SIZE, true);
-            bmp.recycle();
+            sendBitmap = bmp;
         }
-
+        imageObject = new WXImageObject(sendBitmap);
+        thumbBmp = Bitmap.createScaledBitmap(bmp, THUMB_SIZE, THUMB_SIZE, true);
         return shareByWechat(imageObject, null, thumbBmp, null, scene, listener, appId);
     }
 
@@ -410,13 +404,7 @@ public class WxHelper {
         WXWebpageObject webPage = new WXWebpageObject();
         webPage.webpageUrl = url;
         Bitmap thumbBmp;
-        if (bmp.getWidth() == THUMB_SIZE && bmp.getHeight() == THUMB_SIZE) {
-            thumbBmp = bmp;
-        } else {
-            thumbBmp = Bitmap.createScaledBitmap(bmp, THUMB_SIZE, THUMB_SIZE, true);
-            bmp.recycle();
-        }
-
+        thumbBmp = Bitmap.createScaledBitmap(bmp, THUMB_SIZE, THUMB_SIZE, true);
         return shareByWechat(webPage, title, thumbBmp, description, scene, listener, appId);
     }
 
@@ -434,13 +422,7 @@ public class WxHelper {
         videoObj.videoUrl = url;
 
         Bitmap thumbBmp;
-        if (bmp.getWidth() == THUMB_SIZE && bmp.getHeight() == THUMB_SIZE) {
-            thumbBmp = bmp;
-        } else {
-            thumbBmp = Bitmap.createScaledBitmap(bmp, THUMB_SIZE, THUMB_SIZE, true);
-            bmp.recycle();
-        }
-
+        thumbBmp = Bitmap.createScaledBitmap(bmp, THUMB_SIZE, THUMB_SIZE, true);
         return shareByWechat(videoObj, title, thumbBmp, description, scene, listener, appId);
     }
 
@@ -453,7 +435,7 @@ public class WxHelper {
      * @param description 分享的描述文字
      * @param scene       分享到的场景，会话列表、朋友圈等
      * @param listener    分享结果的监听
-     * @param appId       部分场景下分享的 appId 和登录、支付的不同，这里需要一个重载参数，可为空
+     * @param appId       部分场景下这里需要的 appId 和登录、支付的不同，需要重载，为空代表使用默认的
      * @return true/false
      */
     private boolean shareByWechat(@NonNull WXMediaMessage.IMediaObject mediaObject,
@@ -473,10 +455,7 @@ public class WxHelper {
         }
 
         if (thumb != null) {
-            msg.thumbData = bmpToByteArray(thumb, true);
-            if (msg.thumbData.length > MAX_BYTES) {
-                return false;
-            }
+            msg.thumbData = bitmap2Bytes(thumb, MAX_BYTES);
         }
 
         SendMessageToWX.Req req = new SendMessageToWX.Req();
@@ -490,29 +469,29 @@ public class WxHelper {
         return mWXApi.sendReq(req);
     }
 
-    //todo add a goto miniApp fun
-
     /**
      * 小程序分享
      *
-     * @param context     上下文
      * @param webPageUrl  兼容低版本的网页链接
      * @param userName    小程序的原始id
      * @param path        小程序页面路径
      * @param title       小程序消息title
      * @param description 小程序消息desc
+     * @param authority   fileProvider 的 authority
      * @param imageFile   小程序消息封面图片，小于128k
+     * @param appId       部分场景下这里需要的 appId 和登录、支付的不同，需要重载，为空代表使用默认的
      * @param type        小程序的类型，默认正式版
+     * @param listener    监听
      */
-    public void miniAppShare(Context context,
-                             String webPageUrl,
+    public void miniAppShare(String webPageUrl,
                              String userName,
                              String path,
                              String title,
                              String description,
                              final File imageFile,
                              @NonNull String authority,
-                             int type,
+                             @Nullable Integer type,
+                             @Nullable String appId,
                              @Nullable WxShareListener listener) {
         WXMiniProgramObject miniProgramObj = new WXMiniProgramObject();
         webPageUrl = TextUtils.isEmpty(webPageUrl) ? " " : webPageUrl;
@@ -523,44 +502,45 @@ public class WxHelper {
         //小程序页面路径
         miniProgramObj.path = path;
         miniProgramObj.withShareTicket = true;
-        switch (type) {
-            //发布版
-            case 0:
-                miniProgramObj.miniprogramType = WXMiniProgramObject.MINIPTOGRAM_TYPE_RELEASE;
-                break;
-            //开发版
-            case 1:
-                miniProgramObj.miniprogramType = WXMiniProgramObject.MINIPROGRAM_TYPE_TEST;
-                break;
-            //体验版
-            case 2:
-                miniProgramObj.miniprogramType = WXMiniProgramObject.MINIPROGRAM_TYPE_PREVIEW;
-                break;
-            default:
-                break;
+        if (type == null) {
+            miniProgramObj.miniprogramType = WXMiniProgramObject.MINIPTOGRAM_TYPE_RELEASE;
+        } else {
+            switch (type) {
+                //正式版
+                case 0:
+                    miniProgramObj.miniprogramType = WXMiniProgramObject.MINIPTOGRAM_TYPE_RELEASE;
+                    break;
+                //开发版
+                case 1:
+                    miniProgramObj.miniprogramType = WXMiniProgramObject.MINIPROGRAM_TYPE_TEST;
+                    break;
+                //体验版
+                case 2:
+                    miniProgramObj.miniprogramType = WXMiniProgramObject.MINIPROGRAM_TYPE_PREVIEW;
+                    break;
+                default:
+                    break;
+            }
         }
         WXMediaMessage msg = new WXMediaMessage(miniProgramObj);
         // 小程序消息title
         msg.title = title;
         // 小程序消息desc
         msg.description = description;
-        Uri imageUri;
-        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.M) {
-            imageUri = FileProvider.getUriForFile(context, authority, imageFile);
-            context.grantUriPermission(context.getPackageName(), imageUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        } else {
-            imageUri = Uri.fromFile(imageFile);
-        }
         if (imageFile != null) {
             Bitmap bitmap = BitmapFactory.decodeFile(imageFile.getAbsolutePath());
-            msg.setThumbImage(bitmap);
+            msg.thumbData = getThumb(bitmap);
         }
         SendMessageToWX.Req req = new SendMessageToWX.Req();
         req.transaction = String.valueOf(System.currentTimeMillis());
         req.message = msg;
         req.scene = SendMessageToWX.Req.WXSceneSession;
         WXEntryActivity.setWxShareListener(listener);
-        mWXApi.sendReq(req);
+        if (!TextUtils.isEmpty(appId)) {
+            WXAPIFactory.createWXAPI(appContext, appId, true).sendReq(req);
+        } else {
+            mWXApi.sendReq(req);
+        }
     }
 
     /**
@@ -591,28 +571,30 @@ public class WxHelper {
     /**
      * 跳转到小程序
      *
-     * @param miniAppUserName 小程序原始id
+     * @param miniAppId       小程序原始id
      * @param path            拉起小程序页面的可带参路径，不填默认拉起小程序首页
+     * @param appId           部分场景下这里需要的 appId 和登录、支付的不同，需要重载，
+     * @param miniprogramType 小程序版本类型 发布（0）| 测试（1） | 体验（2）
      */
-    public void gotoMiniApp(String miniAppUserName, String path) {
+    public void gotoMiniApp(String miniAppId, String path, @Nullable String appId, int miniprogramType) {
         WXLaunchMiniProgram.Req req = new WXLaunchMiniProgram.Req();
-        req.userName = miniAppUserName;
+        req.userName = miniAppId;
         req.path = path;
         // 可选打开 开发版，体验版和正式版
-        req.miniprogramType = WXLaunchMiniProgram.Req.MINIPTOGRAM_TYPE_RELEASE;
-        mWXApi.sendReq(req);
+        req.miniprogramType = miniprogramType;
+        if (!TextUtils.isEmpty(appId)) {
+            WXAPIFactory.createWXAPI(appContext, appId, true).sendReq(req);
+        } else {
+            mWXApi.sendReq(req);
+        }
     }
 
     /**
      * 检测手机上是否已经安装微信
      *
-     * @param context 上下文
      * @return 已经安装返回true, 否则返回false
      */
-    public boolean isWechatInstalled(Context context, String appId) {
-        if (mWXApi == null) {
-            mWXApi = WXAPIFactory.createWXAPI(context, appId, true);
-        }
+    public boolean isWechatInstalled(String appId) {
         return mWXApi.isWXAppInstalled();
     }
 
@@ -624,26 +606,20 @@ public class WxHelper {
      * @return boolean
      */
     public boolean isSupportWechat() {
-        boolean ret = false;
-        if (mWXApi != null) {
-            int wxSdkVersion = mWXApi.getWXAppSupportAPI();
-            ret = (wxSdkVersion >= TIMELINE_SUPPORTED_VERSION);
-        }
-        return ret;
+        return mWXApi.getWXAppSupportAPI() >= TIMELINE_SUPPORTED_VERSION;
     }
 
     /**
      * 微信 6.7.3 版本的判断，1360 是微信 6.7.3 的版本号
      * 6.7.3 开始不再支持多图分享，但允许手动添加
      *
-     * @param context 上下文
      * @return 是否
      */
     @SuppressLint("NewApi")
-    public boolean isWechat673Version(Context context) {
+    public boolean isWechat673Version() {
         boolean ret = false;
         try {
-            PackageInfo packageInfo = context.getPackageManager().getPackageInfo(WECHAT_PACKAGE_NAME, 0);
+            PackageInfo packageInfo = appContext.getPackageManager().getPackageInfo(WECHAT_PACKAGE_NAME, 0);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
                     && packageInfo != null
                     && packageInfo.getLongVersionCode() >= WECHAT_673) {
@@ -666,32 +642,6 @@ public class WxHelper {
     }
 
     /**
-     * Bitmap 转换成 byte[]
-     */
-    private byte[] bmpToByteArray(Bitmap bmp, boolean needRecycle) {
-
-        int i;
-        int j;
-        if (bmp.getHeight() > bmp.getWidth()) {
-            i = bmp.getWidth();
-            j = bmp.getWidth();
-        } else {
-            i = bmp.getHeight();
-            j = bmp.getHeight();
-        }
-
-        Bitmap localBitmap = Bitmap.createBitmap(i, j, Bitmap.Config.RGB_565);
-        Canvas localCanvas = new Canvas(localBitmap);
-
-        localCanvas.drawBitmap(bmp, new Rect(0, 0, i, j), new Rect(0, 0, i, j), null);
-        if (needRecycle) {
-            bmp.recycle();
-        }
-
-        return bitmap2Bytes(localBitmap, MAX_BYTES);
-    }
-
-    /**
      * Bitmap 转换成 byte[] 并且进行压缩, 压缩到不大于给定上限
      */
     private byte[] bitmap2Bytes(Bitmap bitmap, int maxBytes) {
@@ -707,19 +657,91 @@ public class WxHelper {
         return output.toByteArray();
     }
 
-    /**
-     * 可在子线程使用的 toast，防止子线程使用时闪退
-     *
-     * @param stringId id
-     */
     private void showToast(@StringRes int stringId) {
-        // 判断线程
-        if (Looper.myLooper() == Looper.getMainLooper()) {
+        if (appContext != null) {
             Toast.makeText(appContext, stringId, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * 通过ContentResolver获取图片Uri(FileProvider.getUriForFile拿到的Uri微信识别不了，分享报错"分享失败 多文件分享只支持照片格式")
+     *
+     * @param context   context
+     * @param imageFile imageFile
+     */
+    private static Uri getImageContentUri(Context context, File imageFile) {
+        String filePath = imageFile.getAbsolutePath();
+        Cursor cursor = context.getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                new String[]{MediaStore.Images.Media._ID}, MediaStore.Images.Media.DATA + "=? ",
+                new String[]{filePath}, null);
+        Uri uri = null;
+
+        if (cursor != null) {
+            if (cursor.moveToFirst()) {
+                int id = cursor.getInt(cursor.getColumnIndex(MediaStore.MediaColumns._ID));
+                Uri baseUri = Uri.parse("content://media/external/images/media");
+                uri = Uri.withAppendedPath(baseUri, "" + id);
+            }
+
+            cursor.close();
+        }
+
+        if (uri == null) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Images.Media.DATA, filePath);
+            uri = context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+        }
+
+        return uri;
+    }
+
+    /**
+     * 通过ContentResolver获取视频Uri(FileProvider.getUriForFile拿到的Uri微信识别不了，分享报错"分享失败 多文件分享只支持照片格式")
+     *
+     * @param context   context
+     * @param videoFile videoFile
+     */
+    private static Uri getVideoContentUri(Context context, File videoFile) {
+        Uri uri = null;
+        String filePath = videoFile.getAbsolutePath();
+        Cursor cursor = context.getContentResolver().query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                new String[]{MediaStore.Video.Media._ID}, MediaStore.Video.Media.DATA + "=? ",
+                new String[]{filePath}, null);
+
+        if (cursor != null) {
+            if (cursor.moveToFirst()) {
+                int id = cursor.getInt(cursor.getColumnIndex(MediaStore.MediaColumns._ID));
+                Uri baseUri = Uri.parse("content://media/external/video/media");
+                uri = Uri.withAppendedPath(baseUri, "" + id);
+            }
+
+            cursor.close();
+        }
+
+        if (uri == null) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Video.Media.DATA, filePath);
+            uri = context.getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+        }
+
+        return uri;
+    }
+
+    /**
+     * 获取小程序封面图片字节数组，不超过128KB
+     *
+     * @param bitmap 原始bitmap
+     * @return byte[]
+     */
+    private byte[] getThumb(Bitmap bitmap) {
+        int byteCount = bitmap.getByteCount();
+        ByteBuffer buf = ByteBuffer.allocate(byteCount);
+        bitmap.copyPixelsToBuffer(buf);
+        byte[] byteArray = buf.array();
+        if (byteCount > MAX_MINI_PROGRAM_THUMB_SIZE) {
+            return bitmap2Bytes(bitmap, MAX_MINI_PROGRAM_THUMB_SIZE);
         } else {
-            Looper.prepare();
-            Toast.makeText(appContext, stringId, Toast.LENGTH_SHORT).show();
-            Looper.loop();
+            return byteArray;
         }
     }
 }
